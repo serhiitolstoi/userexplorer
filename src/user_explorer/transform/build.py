@@ -1,7 +1,7 @@
 """Normalize the events DataFrame and build per-user blobs.
 
-M1 blobs are minimal (identity, totals, flat event list).
-M2 enriches by passing sessions_by_user, family_assignment, and attrs_by_user.
+Each blob carries identity + totals (u, te, sn, fs, ls), a family-count rollup
+(fc), user attributes (attrs), and the compact nested session list (s).
 """
 
 from __future__ import annotations
@@ -50,16 +50,12 @@ def build_user_blobs(
     df: pl.DataFrame,
     schema: ResolvedSchema,
     *,
-    max_users: int | None = None,
-    sessions_by_user: dict[str, list[list[Any]]] | None = None,
-    family_assignment: dict[str, str] | None = None,
+    sessions_by_user: dict[str, list[list[Any]]],
+    family_assignment: dict[str, str],
     attrs_by_user: dict[str, dict[str, str]] | None = None,
+    max_users: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Produce one blob per user.
-
-    When sessions_by_user and family_assignment are provided (M2+), the blob
-    includes sn, fc, attrs, and s. Otherwise falls back to M1 flat events list.
-    """
+    """Produce one blob per user (u, te, sn, fs, ls, fc, attrs, s)."""
     user_ids = df.get_column("user_id").unique().sort()
     if max_users is not None and user_ids.len() > max_users:
         user_ids = user_ids.head(max_users)
@@ -67,64 +63,37 @@ def build_user_blobs(
 
     df_filtered = df.filter(pl.col("user_id").is_in(keep))
 
-    if sessions_by_user is not None and family_assignment is not None:
-        grouped = (
-            df_filtered.group_by("user_id", maintain_order=True)
-            .agg(
-                pl.len().alias("te"),
-                pl.col("timestamp").min().alias("fs"),
-                pl.col("timestamp").max().alias("ls"),
-                pl.col("event_name").alias("en_list"),
-            )
-            .sort("user_id")
-        )
-        blobs: list[dict[str, Any]] = []
-        for row in grouped.iter_rows(named=True):
-            uid = str(row["user_id"])
-            sessions = sessions_by_user.get(uid, [])
-            fc: dict[str, int] = {}
-            for en in row["en_list"]:
-                fam = family_assignment.get(str(en), "other")
-                fc[fam] = fc.get(fam, 0) + 1
-            blobs.append(
-                {
-                    "u": uid,
-                    "te": int(row["te"]),
-                    "sn": len(sessions),
-                    "fs": _fmt_ts(row["fs"]),
-                    "ls": _fmt_ts(row["ls"]),
-                    "fc": fc,
-                    "attrs": (attrs_by_user or {}).get(uid, {}),
-                    "s": sessions,
-                }
-            )
-        return blobs
-
-    # M1 fallback: flat event list
-    grouped_m1 = (
+    grouped = (
         df_filtered.group_by("user_id", maintain_order=True)
         .agg(
             pl.len().alias("te"),
             pl.col("timestamp").min().alias("fs"),
             pl.col("timestamp").max().alias("ls"),
-            pl.col("timestamp").alias("ts_list"),
             pl.col("event_name").alias("en_list"),
         )
         .sort("user_id")
     )
-    blobs_m1: list[dict[str, Any]] = []
-    for row in grouped_m1.iter_rows(named=True):
-        events = [[_fmt_ts(t), str(e)] for t, e in zip(row["ts_list"], row["en_list"], strict=True)]
-        blobs_m1.append(
+    blobs: list[dict[str, Any]] = []
+    for row in grouped.iter_rows(named=True):
+        uid = str(row["user_id"])
+        sessions = sessions_by_user.get(uid, [])
+        fc: dict[str, int] = {}
+        for en in row["en_list"]:
+            fam = family_assignment.get(str(en), "other")
+            fc[fam] = fc.get(fam, 0) + 1
+        blobs.append(
             {
-                "u": str(row["user_id"]),
+                "u": uid,
                 "te": int(row["te"]),
+                "sn": len(sessions),
                 "fs": _fmt_ts(row["fs"]),
                 "ls": _fmt_ts(row["ls"]),
-                "events": events,
+                "fc": fc,
+                "attrs": (attrs_by_user or {}).get(uid, {}),
+                "s": sessions,
             }
         )
-    return blobs_m1
+    return blobs
 
 
 def _fmt_ts(value: Any) -> str:

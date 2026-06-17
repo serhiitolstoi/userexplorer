@@ -58,6 +58,7 @@ packages = ["src/user_explorer"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/user_explorer/viewer/template.html" = "user_explorer/viewer/template.html"
+"src/user_explorer/viewer/logic.js" = "user_explorer/viewer/logic.js"
 
 [tool.ruff]
 line-length = 100

@@ -50,12 +50,34 @@ def test_no_families_flag() -> None:
     assert list(registry.keys()) == ["other"]
 
 
-def test_hash_stable_colors() -> None:
+def test_stable_colors_across_calls() -> None:
     s = _series(["page_viewed", "item_clicked"])
     _, reg1 = derive_families(s)
     _, reg2 = derive_families(s)
     assert reg1["view"].color == reg2["view"].color
     assert reg1["click"].color == reg2["click"].color
+
+
+def test_colors_assigned_by_sorted_order() -> None:
+    """Color slots follow sorted family order, so they are deterministic across
+    processes (the old hash()-based assignment was randomized by PYTHONHASHSEED)."""
+    from user_explorer.derive.families import _PALETTE
+
+    s = _series(["page_viewed", "item_clicked", "thing_submitted"])
+    _, reg = derive_families(s)
+    # named families sorted: click, submit, view -> palette slots 0, 1, 2
+    assert reg["click"].color == _PALETTE[0][0]
+    assert reg["submit"].color == _PALETTE[1][0]
+    assert reg["view"].color == _PALETTE[2][0]
+
+
+def test_family_info_has_dark_variants() -> None:
+    s = _series(["page_viewed", "item_clicked"])
+    _, reg = derive_families(s)
+    info = reg["view"]
+    # light + dark pill colors are both present and distinct
+    assert info.bg and info.fg and info.bg_dark and info.fg_dark
+    assert info.bg != info.bg_dark
 
 
 def test_unknown_events_go_to_other() -> None:

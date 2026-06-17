@@ -15,8 +15,10 @@ from pathlib import Path
 from typing import Any
 
 _TEMPLATE = Path(__file__).parent / "template.html"
+_LOGIC = Path(__file__).parent / "logic.js"
 _DATA_SENTINEL = "/*__USERLENS_DATA__*/"
 _META_SENTINEL = "/*__USERLENS_META__*/"
+_LOGIC_SENTINEL = "/*__USERLENS_LOGIC__*/"
 
 
 def render(
@@ -28,11 +30,18 @@ def render(
 ) -> None:
     """Write self-contained HTML to out_path; optionally open in browser."""
     template = _TEMPLATE.read_text(encoding="utf-8")
+    logic_js = _LOGIC.read_text(encoding="utf-8")
 
     data_json = json.dumps(blobs, separators=(",", ":"), default=str)
     meta_json = json.dumps(meta, separators=(",", ":"), default=str)
 
-    html = template.replace(_DATA_SENTINEL, data_json).replace(_META_SENTINEL, meta_json)
+    # Inline the shared analytics module first (it contains no sentinels), then
+    # the data/meta payloads. Keeps the output a single self-contained file.
+    html = (
+        template.replace(_LOGIC_SENTINEL, logic_js)
+        .replace(_DATA_SENTINEL, data_json)
+        .replace(_META_SENTINEL, meta_json)
+    )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=out_path.parent, prefix=".userexplorer_", suffix=".html")

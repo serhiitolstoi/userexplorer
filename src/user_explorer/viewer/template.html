@@ -256,6 +256,29 @@ body{
 }
 .range-summary b{color:var(--text);font-weight:600}
 
+/* ── Signals strip (computed insights — all-time) ── */
+.sig-section{margin-top:12px;padding-top:12px;border-top:1px solid var(--border-soft)}
+.sig-strip{display:flex;flex-wrap:wrap;gap:8px;margin-top:7px}
+.sig{
+  display:flex;flex-direction:column;gap:3px;min-width:128px;
+  background:var(--card-2);border:1px solid var(--border-soft);
+  border-radius:8px;padding:8px 12px;
+}
+.sig-label{font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--text-3)}
+.sig-val{font-size:13px;font-weight:600;color:var(--text);display:flex;align-items:center;gap:6px;line-height:1.3}
+.sig-val code{font-family:var(--mono);font-size:12px}
+.sig-sub{font-size:10px;color:var(--text-3);font-family:var(--mono)}
+.sig-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;background:currentColor}
+.sig.clickable{cursor:pointer;transition:.12s ease}
+.sig.clickable:hover{border-color:var(--accent);background:var(--accent-bg)}
+.sig-eng-active{color:var(--ok)}
+.sig-eng-cooling{color:var(--warn)}
+.sig-eng-dormant{color:var(--text-3)}
+.sig-eng-one_shot{color:var(--text-2)}
+.sig-journey{display:flex;align-items:center;gap:3px;flex-wrap:wrap}
+.sig-jchip{font-size:10px;font-family:var(--mono);padding:1px 6px;border-radius:3px;border:1px solid transparent}
+.sig-jarrow{color:var(--text-3);font-size:9px}
+
 /* ── Heatmap section ── */
 .hm-section{margin-top:14px;border-top:1px solid var(--border-soft);padding-top:12px}
 .hm-title{
@@ -749,6 +772,7 @@ details[open] .sess-arrow{transform:rotate(90deg)}
       </div>
       <div class="stats" id="stats"></div>
       <div class="achips" id="achips"></div>
+      <div class="sig-section" id="signals"></div>
       <div class="range-bar">
         <span class="range-bar-lbl">Range</span>
         <div class="range-presets" id="range-presets">
@@ -792,6 +816,7 @@ details[open] .sess-arrow{transform:rotate(90deg)}
 
 <script type="application/json" id="USERLENS_DATA">/*__USERLENS_DATA__*/</script>
 <script type="application/json" id="USERLENS_META">/*__USERLENS_META__*/</script>
+<script>/*__USERLENS_LOGIC__*/</script>
 <script>
 (function(){
 'use strict';
@@ -850,14 +875,7 @@ function sessDur(evs){
   if(!m) return '';
   return m<60?m+'m':Math.floor(m/60)+'h '+(m%60)+'m';
 }
-function sessDurMin(evs){
-  if(!evs||evs.length<2) return 0;
-  const [fh,fm]=evs[0][0].split(':').map(Number);
-  const [lh,lm]=evs[evs.length-1][0].split(':').map(Number);
-  let m=(lh*60+lm)-(fh*60+fm);
-  if(m<0) m+=1440;
-  return m;
-}
+function sessDurMin(evs){return ULLogic.sessDurMin(evs);}
 
 function fmtTs(ts){
   const d=new Date(ts.replace(' ','T'));
@@ -874,86 +892,38 @@ function activeDays(u){return new Set(u.s.map(([,ts])=>ts.slice(0,10))).size;}
 const maxTe=DATA.reduce((m,u)=>Math.max(m,u.te),1);
 const ATTR_KEYS=(META.attributes||[]).map(a=>a.key).slice(0,2);
 
-/* ── feature derivation (universal client-side coloring) ── */
-const HUE_PALETTE=[220,278,160,28,338,200,52,108,310,12,250,182];
-function featurePalette(idx){
-  const h=HUE_PALETTE[idx%HUE_PALETTE.length];
-  return {
-    color:`hsl(${h} 60% 52%)`,
-    bg:`hsla(${h} 65% 55% / .14)`,
-    fg:`hsl(${h} 60% 38%)`,
-    bgDark:`hsla(${h} 65% 60% / .18)`,
-    fgDark:`hsl(${h} 65% 78%)`,
-    border:`hsla(${h} 60% 52% / .45)`,
-  };
-}
-function splitPrefix(name){
-  const parts=String(name).split(/[._:\-\s/]/);
-  if(parts.length<2) return null;
-  const p=parts[0];
-  return p.length>=2?p:null;
-}
-function deriveFeatures(){
-  // Aggregate event-name counts from META.topEvents (server-provided ranked list)
-  const counts={}; const allNames=new Set();
-  (META.topEvents||[]).forEach(e=>{counts[e.name]=(counts[e.name]||0)+e.count; allNames.add(e.name);});
-  // Top up by scanning DATA for names that aren't in topEvents
-  DATA.forEach(u=>u.s.forEach(([,,evs])=>evs.forEach(([,n])=>{
-    if(!(n in counts)) counts[n]=0;
-    counts[n]++;
-    allNames.add(n);
-  })));
-  const total=Object.values(counts).reduce((a,b)=>a+b,0)||1;
-  const groups={};
-  for(const name of allNames){
-    const p=splitPrefix(name);
-    if(!p) continue;
-    if(!groups[p]) groups[p]={events:new Set(),total:0};
-    groups[p].events.add(name);
-    groups[p].total+=counts[name]||0;
-  }
-  const kept=Object.entries(groups)
-    .filter(([,g])=>g.events.size>=2 && g.total/total>=0.005)
-    .sort((a,b)=>b[1].total-a[1].total)
-    .slice(0,11);
-  // If prefix grouping produced too little coverage, fall back to META.families verb-based
-  const coverage=kept.reduce((s,[,g])=>s+g.total,0)/total;
-  const useFeatures = kept.length>=2 && coverage>=0.3;
-  const byEvent={}; const registry={};
-  if(useFeatures){
-    kept.forEach(([prefix],i)=>{
-      const pal=featurePalette(i);
-      registry[prefix]=pal;
-      groups[prefix].events.forEach(n=>{byEvent[n]=prefix;});
-    });
-    registry['other']=featurePalette(kept.length);
-  }else{
-    // Use server families verbatim
-    Object.entries(META.families||{}).forEach(([fam,v])=>{
-      registry[fam]={color:v.color,bg:v.bg,fg:v.fg,bgDark:v.bg,fgDark:v.fg,border:(v.color||'#999')+'55'};
-    });
-    (META.topEvents||[]).forEach(e=>{byEvent[e.name]=e.family||'other';});
-    if(!registry['other']) registry['other']={color:'#888',bg:'#eee',fg:'#444',bgDark:'#333',fgDark:'#bbb',border:'#88888855'};
-  }
-  return {byEvent,registry,useFeatures};
-}
-const FEATURES=deriveFeatures();
-function famOf(name){return FEATURES.byEvent[name]||'other';}
+/* ── event taxonomy (server-sourced — single source of truth) ──
+   Event families and their colors are computed once in derive/families.py and
+   embedded in META. The viewer only *consumes* them; it never re-derives
+   families client-side. META.eventFamilies maps every event name -> family;
+   META.families maps a family -> {color,bg,fg,bgDark,fgDark,label}. */
+const FAM_REGISTRY=META.families||{};
+const EVENT_FAMILIES=META.eventFamilies||{};
+const _FAM_FALLBACK={color:'#5E6AD2',bg:'#eee',fg:'#444',bgDark:'#26262e',fgDark:'#bbb'};
+function famOf(name){return EVENT_FAMILIES[name]||'other';}
+function famInfo(f){return FAM_REGISTRY[f]||FAM_REGISTRY['other']||_FAM_FALLBACK;}
+function featureColor(f){return famInfo(f).color;}
 
-/* ── inject feature CSS (theme-aware) ── */
+/* Per-event hue ramp — gives each of the top events its own color in the
+   heatmap + chip strip. This is a *presentation* concern (one hue per event)
+   and is deliberately separate from the semantic family palette above. */
+const EVENT_HUES=[220,278,160,28,338,200,52,108,310,12,250,182];
+
+/* ── inject family CSS (theme-aware) + a --fam-<name> solid-color token ── */
 const featureStyle=document.createElement('style');
 const featureStyleParts=[];
-Object.entries(FEATURES.registry).forEach(([f,v])=>{
+const famVars=[];
+Object.entries(FAM_REGISTRY).forEach(([f,v])=>{
   const safe=CSS.escape(f);
+  const border=(v.color||'#999')+'66';
   featureStyleParts.push(
-    `[data-theme=light] .fam-${safe}{background:${v.bg};color:${v.fg};border-color:${v.border}}`,
-    `[data-theme=dark] .fam-${safe}{background:${v.bgDark};color:${v.fgDark};border-color:${v.border}}`
+    `[data-theme=light] .fam-${safe}{background:${v.bg};color:${v.fg};border-color:${border}}`,
+    `[data-theme=dark] .fam-${safe}{background:${v.bgDark};color:${v.fgDark};border-color:${border}}`
   );
+  famVars.push(`--fam-${safe}:${v.color}`);
 });
-featureStyle.textContent=featureStyleParts.join('\n');
+featureStyle.textContent=`:root{${famVars.join(';')}}\n`+featureStyleParts.join('\n');
 document.head.appendChild(featureStyle);
-
-function featureColor(f){return (FEATURES.registry[f]||FEATURES.registry['other']||{color:'#5E6AD2'}).color;}
 
 /* ── filters ── */
 const filtersDiv=document.getElementById('filters');
@@ -1078,6 +1048,7 @@ function selectUser(uid){
 
 function rerenderAll(u){
   renderCard(u);
+  renderSignals(u);
   renderHeatmap(u);
   renderTimeline(u);
   renderOverview(u);
@@ -1109,6 +1080,47 @@ function renderCard(u){
   document.getElementById('achips').innerHTML=Object.entries(u.attrs||{}).map(
     ([k,va])=>`<span class="achip"><span class="achip-key">${esc(k)}</span> ${esc(va)}</span>`
   ).join('');
+}
+
+/* ── signals strip (computed insights from u.ins — all-time, dataset-relative) ── */
+function renderSignals(u){
+  const el=document.getElementById('signals');
+  const ins=u.ins;
+  if(!ins){el.innerHTML='';return;}
+  const cards=[];
+
+  // Activity rank (power-score percentile → "Top X%")
+  const ps=ins.power_score|0;
+  const topPct=Math.max(1,100-ps);
+  cards.push(`<div class="sig"><span class="sig-label">Activity rank</span><span class="sig-val">Top ${topPct}%</span><span class="sig-sub">power ${ps}/100</span></div>`);
+
+  // Engagement status + recency relative to the dataset's last day
+  const eng=ins.engagement||'dormant';
+  const engLbl={active:'Active',cooling:'Cooling off',dormant:'Dormant',one_shot:'One session'}[eng]||eng;
+  const dsl=ins.days_since_last;
+  const recency = dsl<0?'recency unknown':dsl===0?'active through data end':`last seen ${dsl}d before data ends`;
+  cards.push(`<div class="sig"><span class="sig-label">Engagement</span><span class="sig-val sig-eng-${esc(eng)}"><span class="sig-dot"></span>${engLbl}</span><span class="sig-sub">${recency}</span></div>`);
+
+  // Friction flag (top stuck signal) → click jumps to that session
+  const ss=(ins.stuck_signals||[])[0];
+  if(ss){
+    cards.push(`<div class="sig clickable" data-sid="${esc(ss.session)}" title="Jump to this session"><span class="sig-label">Friction</span><span class="sig-val">⟳ <code>${esc(ss.event)}</code></span><span class="sig-sub">repeated ${ss.count}× in one session</span></div>`);
+  }
+
+  // Adoption journey — order in which the user first hit each family
+  const ffs=ins.family_first_seen||{};
+  const order=Object.entries(ffs).sort((a,b)=>String(a[1]).localeCompare(String(b[1])));
+  if(order.length){
+    const chips=order.slice(0,6).map(([fam],i)=>
+      `${i?'<span class="sig-jarrow">→</span>':''}<span class="sig-jchip fam-${CSS.escape(fam)}" title="first seen ${esc(ffs[fam])}">${esc(fam)}</span>`
+    ).join('');
+    cards.push(`<div class="sig"><span class="sig-label">Adoption journey</span><span class="sig-journey">${chips}</span><span class="sig-sub">order features first appeared</span></div>`);
+  }
+
+  el.innerHTML=`<div class="ov-sec-label">Signals · all-time</div><div class="sig-strip">${cards.join('')}</div>`;
+  el.querySelectorAll('.sig.clickable').forEach(c=>c.addEventListener('click',()=>{
+    const sid=c.dataset.sid; if(sid) jumpToSession(sid);
+  }));
 }
 
 const copyBtn=document.getElementById('copy-btn');
@@ -1272,7 +1284,7 @@ function renderEventChips(u){
   if(highlightEvent && !(highlightEvent in counts)) counts[highlightEvent]=0;
   const ranked=Object.entries(counts).sort((a,b)=>b[1]-a[1]);
   chipColorMap={};
-  ranked.slice(0,9).forEach(([n],i)=>{chipColorMap[n]=`hsl(${HUE_PALETTE[i]} 60% 52%)`;});
+  ranked.slice(0,9).forEach(([n],i)=>{chipColorMap[n]=`hsl(${EVENT_HUES[i]} 60% 52%)`;});
   const TOP=9;
   const shown=ranked.slice(0,TOP);
   const rest=ranked.slice(TOP);
@@ -1472,7 +1484,7 @@ function renderOverview(u){
   const famCounts={};
   rows.forEach(([n,c])=>{const f=famOf(n);famCounts[f]=(famCounts[f]||0)+c;});
   const famRows=Object.entries(famCounts).sort((a,b)=>b[1]-a[1]);
-  const famColor=f=>(FEATURES.registry[f]||{}).color||'var(--accent)';
+  const famColor=f=>featureColor(f);
   const compSegs=famRows.map(([f,c])=>{
     const pct=Math.round(c/totalE*100);
     return `<div class="ov-seg" style="flex:${c};background:${famColor(f)}" title="${esc(f)} · ${pct}% · ${c.toLocaleString()} events"></div>`;
@@ -1493,15 +1505,7 @@ function renderOverview(u){
     if(!showCohort) return '';
     const userShare=cnt/totalE;
     const baseCnt=Math.max((coh.tot[n]||0)-(selfTot[n]||0),0);
-    const cohShare=(baseCnt/baseGrand) || (0.25/baseGrand);
-    const idx=cohShare>0?userShare/cohShare:0;
-    const capped=Math.min(idx,4);
-    let label,cls;
-    if(idx>=1.15){cls='ov-idx-hi';label=(idx>=9.95?'9.9+':idx.toFixed(1))+'×';}
-    else if(idx<=0.85){cls='ov-idx-lo';label=idx.toFixed(1)+'×';}
-    else{cls='ov-idx-mid';label='1.0×';}
-    const rightW=idx>1?Math.min((capped-1)/3*50,50):0;
-    const leftW=idx<1?(1-idx)*50:0;
+    const {label,cls,leftW,rightW}=ULLogic.cohortIndex(userShare,baseCnt,baseGrand);
     return `<td class="ov-idx ${cls}"><span class="ov-idx-bar"><span class="ov-idx-left" style="width:${leftW}%"></span><span class="ov-idx-center"></span><span class="ov-idx-right" style="width:${rightW}%"></span></span><span class="ov-idx-lbl">${label}</span></td>`;
   }
   const cohHead=showCohort?'<th title="This user\'s share of each event vs the average user (share-indexed). 1.0× = typical; higher = does it more.">vs avg user</th>':'';
@@ -1524,13 +1528,13 @@ function renderOverview(u){
 
   pane.innerHTML=`
     <div class="ov-comp-wrap">
-      <div class="ov-sec-label">Activity composition · ${famRows.length} ${FEATURES.useFeatures?'features':'families'}</div>
+      <div class="ov-sec-label">Activity composition · ${famRows.length} ${famRows.length===1?'family':'families'}</div>
       <div class="ov-comp">${compSegs}</div>
       <div class="ov-legend">${compLegend}</div>
     </div>
     ${hlNote}
     <table class="top-tbl">
-      <thead><tr><th>Event</th><th>Feature</th><th>Count</th><th>%</th>${cohHead}</tr></thead>
+      <thead><tr><th>Event</th><th>Family</th><th>Count</th><th>%</th>${cohHead}</tr></thead>
       <tbody>${rowsHtml}</tbody>
     </table>`;
 
@@ -1554,24 +1558,16 @@ function renderSessions(u){
   const v=getFilteredView(u);
   if(!v.sessions.length){container.innerHTML='<div class="sx-card sx-empty">No session data in this range</div>';return;}
 
-  // ── activity profile (plain-language headline) ──
+  // ── activity profile (plain-language headline; shared classifier) ──
   const bandLabels=['night','morning','afternoon','evening'];
-  const bandOf=h=>h<6?0:h<12?1:h<18?2:3;
   const DOW_FULL=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
-  const bandCount=[0,0,0,0], dayCount=[0,0,0,0,0,0,0], hourCount=Array(24).fill(0);
-  let weekdayN=0, weekendN=0;
-  v.sessions.forEach(([,ts])=>{
-    const d=new Date(ts.replace(' ','T')); if(isNaN(d)) return;
-    const dow=(d.getDay()+6)%7, hr=d.getHours();
-    bandCount[bandOf(hr)]++; dayCount[dow]++; hourCount[hr]++;
-    if(dow<5) weekdayN++; else weekendN++;
-  });
+  const act=ULLogic.classifyActivity(v.sessions);
   let insightHtml='';
-  const totSess=weekdayN+weekendN;
+  const totSess=act.total;
   if(totSess){
-    const topBand=bandCount.indexOf(Math.max(...bandCount));
-    const peakDay=dayCount.indexOf(Math.max(...dayCount));
-    const wkPct=weekdayN/totSess;
+    const topBand=act.topBand;
+    const peakDay=act.peakDay;
+    const wkPct=act.weekdayN/totSess;
     const dayKind=wkPct>=0.7?'Weekday':wkPct<=0.3?'Weekend':'';
     const band=bandLabels[topBand]+'s';
     // Band = dominant time-of-day window (robust, summed over its hours); peak day = single
@@ -1684,22 +1680,10 @@ function renderSessions(u){
     </div>`;
   }
 
-  // ── Duration histogram ──
-  const buckets=[
-    {lbl:'<1m',lo:0,hi:1,n:0},
-    {lbl:'1–5m',lo:1,hi:5,n:0},
-    {lbl:'5–15m',lo:5,hi:15,n:0},
-    {lbl:'15–30m',lo:15,hi:30,n:0},
-    {lbl:'30–60m',lo:30,hi:60,n:0},
-    {lbl:'1h+',lo:60,hi:Infinity,n:0},
-  ];
+  // ── Duration histogram (shared stats: buckets + avg/p50/p90) ──
   const durs=v.sessions.map(([,,e])=>sessDurMin(e));
-  durs.forEach(m=>{const b=buckets.find(b=>m>=b.lo && m<b.hi); if(b)b.n++;});
+  const {buckets,avg,p50,p90}=ULLogic.durationStats(durs);
   const maxB=Math.max(...buckets.map(b=>b.n),1);
-  const sortedDur=durs.slice().sort((a,b)=>a-b);
-  const avg=sortedDur.length?Math.round(sortedDur.reduce((a,b)=>a+b,0)/sortedDur.length):0;
-  const p50=sortedDur.length?sortedDur[Math.floor(sortedDur.length/2)]:0;
-  const p90=sortedDur.length?sortedDur[Math.floor(sortedDur.length*0.9)]:0;
   function fmtMin(m){if(m<60)return m+'m';return Math.floor(m/60)+'h '+(m%60)+'m';}
   const histRows=buckets.map(b=>`<div class="sx-hist-row"><span class="sx-hist-lbl">${b.lbl}</span><div class="sx-hist-bar"><div class="sx-hist-fg" style="width:${Math.round(b.n/maxB*100)}%"></div></div><span class="sx-hist-cnt">${b.n}</span></div>`).join('');
   const histHtml=`<div class="sx-card">
@@ -1738,27 +1722,9 @@ function renderFlow(u){
   const v=getFilteredView(u);
   if(!v.sessions.length){container.innerHTML='<div class="fp-empty">No sessions in range</div>';return;}
 
-  // ── 1. Build transition map from raw event sequences ──────────────────────
-  // trans[from][to] = count; also track entry (first event) and exit (last event).
-  const trans={};  // {from: {to: count}}
-  const entryCount={};  // first event of each session
-  const exitCount={};   // last event of each session
-  const loopCount={};   // consecutive repeat (A→A)
-  const totalSess=v.sessions.length;
-
-  v.sessions.forEach(([,, evs])=>{
-    if(!evs.length) return;
-    const entry=evs[0][1];
-    const exit=evs[evs.length-1][1];
-    entryCount[entry]=(entryCount[entry]||0)+1;
-    exitCount[exit]=(exitCount[exit]||0)+1;
-    for(let i=0;i<evs.length-1;i++){
-      const from=evs[i][1], to=evs[i+1][1];
-      if(!trans[from]) trans[from]={};
-      trans[from][to]=(trans[from][to]||0)+1;
-      if(from===to) loopCount[from]=(loopCount[from]||0)+1;
-    }
-  });
+  // ── 1. Build transition map from raw event sequences (shared logic) ───────
+  // trans[from][to] = count; plus entry/exit/loop counts. See ULLogic.
+  const {trans,entryCount,exitCount,loopCount,totalSess}=ULLogic.buildTransitions(v.sessions);
 
   // ── 2. Behavioral summary stats ───────────────────────────────────────────
   const topEntries=Object.entries(entryCount).sort((a,b)=>b[1]-a[1]).slice(0,3);
@@ -1776,18 +1742,14 @@ function renderFlow(u){
   const topLoop=Object.entries(loopCount).sort((a,b)=>b[1]-a[1])[0]||null;
 
   // path diversity: unique ordered event-name sequences / total sessions
-  const pathSigs=new Set();
-  v.sessions.forEach(([,,evs])=>{
-    if(evs.length) pathSigs.add(evs.map(e=>e[1]).join('\x1f'));
-  });
-  const diversity=totalSess>1?Math.round(pathSigs.size/totalSess*100):100;
+  const diversity=ULLogic.pathDiversity(v.sessions);
 
   function statHtml(label,val,sub=''){
     return `<div class="fp-stat"><div class="fp-stat-label">${label}</div><div class="fp-stat-val">${val}</div>${sub?`<div class="fp-stat-sub">${sub}</div>`:''}</div>`;
   }
   function evSpan(name){
     const fam=famOf(name);
-    return `<span class="fp-pill fam-${CSS.escape(fam)}" style="font-size:10px;padding:1px 6px;border-radius:3px;border:1px solid transparent">${esc(name)}</span>`;
+    return `<span class="fam-${CSS.escape(fam)}" style="font-size:10px;padding:1px 6px;border-radius:3px;border:1px solid transparent">${esc(name)}</span>`;
   }
 
   const entryVal=topEntries.map(([n,c])=>`${evSpan(n)} <span style="color:var(--text-3)">${Math.round(c/totalSess*100)}%</span>`).join(' · ');
@@ -1875,7 +1837,7 @@ function renderFlow(u){
         const barW=Math.round(node.count/maxCnt*100);
         const fam=famOf(node.name);
         return `<div class="fp-node${node.name===anchor?' anchor':''}" data-name="${esc(node.name)}" data-col="${ci}" title="Click to explore paths from ${esc(node.name)}">
-          <div class="fp-node-fam" style="background:var(--fam-${CSS.escape(fam)}-fg,var(--accent))"></div>
+          <div class="fp-node-fam" style="background:var(--fam-${CSS.escape(fam)},var(--accent))"></div>
           <div class="fp-node-name" style="padding-left:7px">${esc(node.name)}</div>
           <div class="fp-node-bar-wrap"><div class="fp-node-bar" style="width:${barW}%"></div></div>
           <div class="fp-node-meta">
@@ -1968,8 +1930,8 @@ function jumpToEventInDate(date,name){
   requestAnimationFrame(()=>{
     const dateEl=document.querySelector(`#pane-tl .sess-date[data-rawdate="${CSS.escape(date)}"]`);
     if(!dateEl){
-      // Session not in render window — show brief notice on the tl-showing bar
-      const bar=document.querySelector('#pane-tl .tl-showing');
+      // Session not in render window — show brief notice on the cap note bar
+      const bar=document.querySelector('#pane-tl .tl-cap-note');
       if(bar){const orig=bar.textContent; bar.textContent=`↑ Session on ${date} not in view (past 500-event cap)`; setTimeout(()=>{bar.textContent=orig;},2500);}
       return;
     }

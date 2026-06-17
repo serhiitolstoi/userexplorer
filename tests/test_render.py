@@ -141,3 +141,68 @@ def test_render_overview_tab_and_features(tmp_path: Path) -> None:
     assert "ov-row" in html, "Overview rows must be clickable for cross-tab solo"
     # Old naming must be gone
     assert "renderTopEvents" not in html, "renderTopEvents must be renamed to renderOverview"
+
+
+def test_render_inlines_logic_module(tmp_path: Path) -> None:
+    """The shared analytics module must be inlined so output stays one file.
+
+    Guards Track C2: render.py substitutes logic.js for the logic sentinel, and
+    the viewer calls the shared ULLogic functions instead of inlining the math.
+    """
+    result = run(PipelineOptions(events_path=FIXTURES / "tiny.csv"))
+    out = tmp_path / "out.html"
+    render(result.blobs, result.meta, out, open_browser=False)
+
+    html = out.read_text(encoding="utf-8")
+    assert "/*__USERLENS_LOGIC__*/" not in html, "logic sentinel must be replaced"
+    assert "var ULLogic" in html, "logic.js must be inlined into the report"
+    # Render code delegates to the shared module
+    assert "ULLogic.buildTransitions" in html
+    assert "ULLogic.cohortIndex" in html
+    assert "ULLogic.durationStats" in html
+
+
+def test_render_signals_strip_surfaces_insights(tmp_path: Path) -> None:
+    """The user card must render the computed-insight Signals strip.
+
+    Guards Track B: per-user insights are embedded (blob ``ins``) and the viewer
+    renders them (activity rank, engagement, adoption journey) instead of
+    discarding the richest analytical content the way the old report did.
+    """
+    result = run(PipelineOptions(events_path=FIXTURES / "tiny.csv"))
+    # Every blob carries the embedded compact insights
+    assert all("ins" in b and "engagement" in b["ins"] for b in result.blobs)
+
+    out = tmp_path / "out.html"
+    render(result.blobs, result.meta, out, open_browser=False)
+    html = out.read_text(encoding="utf-8")
+
+    assert "renderSignals" in html, "viewer must render the Signals strip"
+    assert 'id="signals"' in html, "Signals container must exist in the card"
+    assert "Signals · all-time" in html, "Signals strip must be labeled all-time"
+    assert "Adoption journey" in html, "Signals must include the first-touch journey"
+    assert "Activity rank" in html, "Signals must include the power-score rank"
+
+
+def test_render_taxonomy_is_server_sourced(tmp_path: Path) -> None:
+    """The viewer must consume the server taxonomy, not re-derive its own.
+
+    Guards the dual-taxonomy collapse: the client-side ``deriveFeatures`` system
+    is gone, the full ``eventFamilies`` map is embedded, and the Overview column
+    reads 'Family' (not the old client-only 'Feature').
+    """
+    result = run(PipelineOptions(events_path=FIXTURES / "tiny.csv"))
+    out = tmp_path / "out.html"
+    render(result.blobs, result.meta, out, open_browser=False)
+
+    html = out.read_text(encoding="utf-8")
+    # Server taxonomy is embedded and consumed
+    assert "eventFamilies" in html, "meta.eventFamilies must be embedded for client coloring"
+    assert "EVENT_FAMILIES=META.eventFamilies" in html, "viewer must read families from META"
+    # Client re-derivation is gone
+    assert "deriveFeatures" not in html, "client-side feature derivation must be removed"
+    assert "splitPrefix" not in html, "client prefix-splitting must be removed"
+    # Per-family color token is injected (fixes the dead --fam-*-fg flow accent)
+    assert "--fam-" in html, "per-family color custom properties must be injected"
+    # Consistent naming
+    assert "<th>Family</th>" in html, "Overview column must be renamed Feature -> Family"

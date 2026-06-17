@@ -44,6 +44,9 @@ def extract_insights(
     # --- power_score (0-100 percentile of te*sn) ---
     power_score = _compute_power_score(blob, all_blobs)
 
+    # --- engagement status (relative to as_of) ---
+    engagement = _classify_engagement(blob.get("sn", 0), days_since_last)
+
     # --- top_families ---
     fc: dict[str, int] = blob.get("fc", {})
     te: int = blob.get("te", 0)
@@ -65,6 +68,7 @@ def extract_insights(
 
     return {
         "power_score": power_score,
+        "engagement": engagement,
         "days_since_last": days_since_last,
         "longest_gap_days": longest_gap_days,
         "first_seen": first_seen,
@@ -73,6 +77,28 @@ def extract_insights(
         "stuck_signals": stuck_signals,
         "family_first_seen": family_first_seen,
     }
+
+
+# Recency thresholds (days) relative to `as_of`. Tuned for typical multi-week
+# product-analytics exports; a single-session user is always "one_shot".
+_ACTIVE_DAYS = 7
+_COOLING_DAYS = 30
+
+
+def _classify_engagement(sessions_count: int, days_since_last: int) -> str:
+    """Coarse engagement status from session count + recency vs. as_of.
+
+    Returns one of: 'one_shot', 'active', 'cooling', 'dormant'.
+    """
+    if sessions_count <= 1:
+        return "one_shot"
+    if days_since_last < 0:  # unparseable last-seen -> can't confirm activity
+        return "dormant"
+    if days_since_last <= _ACTIVE_DAYS:
+        return "active"
+    if days_since_last <= _COOLING_DAYS:
+        return "cooling"
+    return "dormant"
 
 
 def _compute_longest_gap(sessions: list[Any]) -> int:

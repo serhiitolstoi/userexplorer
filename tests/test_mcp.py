@@ -59,6 +59,7 @@ def test_analyze_user() -> None:
     result = analyze_user_impl(blobs, meta, user_id=user_id)
     assert result["user_id"] == user_id
     assert "insights" in result
+    assert result["insights"]["engagement"] in {"active", "cooling", "dormant", "one_shot"}
     assert "sessions" in result
     assert isinstance(result["sessions"], list)
     assert len(result["sessions"]) > 0

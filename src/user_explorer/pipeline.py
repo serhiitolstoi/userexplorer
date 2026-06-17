@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +29,7 @@ from user_explorer.derive import (
     derive_families,
     derive_sessions,
 )
+from user_explorer.insights import extract_insights
 from user_explorer.io import read_events
 from user_explorer.io.reader import sample_for_sniff
 from user_explorer.schema import sniff_schema
@@ -107,6 +108,12 @@ def run(options: PipelineOptions) -> PipelineResult:
         attrs_by_user=attrs_by_user,
     )
 
+    # Per-user insights, embedded so the HTML report can surface the same
+    # signals the MCP/CLI expose. Computed against the dataset's last day
+    # (not date.today()), so a static report's recency stays stable and
+    # meaningful no matter when it's opened.
+    _embed_insights(blobs)
+
     # Top events by count (for meta / M3 sidebar)
     top_events = _build_top_events(normalized, family_assignment)
 
@@ -114,9 +121,20 @@ def run(options: PipelineOptions) -> PipelineResult:
         "schema": sniffed.schema.as_mapping(),
         "attributes": attrs_meta,
         "families": {
-            fam: {"color": info.color, "bg": info.bg, "fg": info.fg, "label": info.label}
+            fam: {
+                "color": info.color,
+                "bg": info.bg,
+                "fg": info.fg,
+                "bgDark": info.bg_dark,
+                "fgDark": info.fg_dark,
+                "label": info.label,
+            }
             for fam, info in family_registry.items()
         },
+        # Full event_name -> family map so the viewer can color any event
+        # (topEvents alone is capped at 50). Single source of truth: the
+        # client never re-derives families.
+        "eventFamilies": family_assignment,
         "topEvents": top_events,
         "generatedAt": datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
@@ -132,6 +150,38 @@ def run(options: PipelineOptions) -> PipelineResult:
         n_events=normalized.height,
         n_sessions=n_sessions,
     )
+
+
+def _dataset_as_of(blobs: list[dict[str, Any]]) -> date:
+    """The dataset's last calendar day (max last-seen). Falls back to today."""
+    best: date | None = None
+    for b in blobs:
+        ls = str(b.get("ls", ""))[:10]
+        try:
+            d = datetime.strptime(ls, "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        if best is None or d > best:
+            best = d
+    return best or date.today()
+
+
+def _embed_insights(blobs: list[dict[str, Any]]) -> None:
+    """Attach a compact ``ins`` field to each blob (in place)."""
+    as_of = _dataset_as_of(blobs)
+    as_of_str = as_of.isoformat()
+    for b in blobs:
+        ins = extract_insights(b, blobs, as_of=as_of)
+        b["ins"] = {
+            "power_score": ins["power_score"],
+            "engagement": ins["engagement"],
+            "days_since_last": ins["days_since_last"],
+            "longest_gap_days": ins["longest_gap_days"],
+            "top_families": ins["top_families"],
+            "stuck_signals": ins["stuck_signals"][:3],
+            "family_first_seen": ins["family_first_seen"],
+            "as_of": as_of_str,
+        }
 
 
 def _apply_timezone(df: pl.DataFrame, tz: str) -> pl.DataFrame:

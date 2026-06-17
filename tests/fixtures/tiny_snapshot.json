@@ -8,6 +8,37 @@
       "view": 4
     },
     "fs": "2026-04-01 09:00:00",
+    "ins": {
+      "as_of": "2026-04-03",
+      "days_since_last": 1,
+      "engagement": "active",
+      "family_first_seen": {
+        "click": "2026-04-01 09:00",
+        "close": "2026-04-02 14:15",
+        "submit": "2026-04-01 09:01",
+        "view": "2026-04-01 09:00"
+      },
+      "longest_gap_days": 1,
+      "power_score": 67,
+      "stuck_signals": [],
+      "top_families": [
+        {
+          "count": 4,
+          "family": "view",
+          "pct": 57
+        },
+        {
+          "count": 1,
+          "family": "click",
+          "pct": 14
+        },
+        {
+          "count": 1,
+          "family": "submit",
+          "pct": 14
+        }
+      ]
+    },
     "ls": "2026-04-02 14:15:12",
     "s": [
       [
@@ -79,6 +110,39 @@
       "view": 3
     },
     "fs": "2026-04-01 10:05:00",
+    "ins": {
+      "as_of": "2026-04-03",
+      "days_since_last": 0,
+      "engagement": "active",
+      "family_first_seen": {
+        "click": "2026-04-01 10:06",
+        "error": "2026-04-03 08:03",
+        "other": "2026-04-03 08:04",
+        "start": "2026-04-03 08:02",
+        "submit": "2026-04-01 10:05",
+        "view": "2026-04-01 10:05"
+      },
+      "longest_gap_days": 1,
+      "power_score": 33,
+      "stuck_signals": [],
+      "top_families": [
+        {
+          "count": 3,
+          "family": "view",
+          "pct": 33
+        },
+        {
+          "count": 2,
+          "family": "submit",
+          "pct": 22
+        },
+        {
+          "count": 1,
+          "family": "click",
+          "pct": 11
+        }
+      ]
+    },
     "ls": "2026-04-03 08:05:00",
     "s": [
       [
@@ -150,6 +214,30 @@
       "view": 3
     },
     "fs": "2026-04-02 16:00:00",
+    "ins": {
+      "as_of": "2026-04-03",
+      "days_since_last": 1,
+      "engagement": "one_shot",
+      "family_first_seen": {
+        "close": "2026-04-02 16:01",
+        "view": "2026-04-02 16:00"
+      },
+      "longest_gap_days": 0,
+      "power_score": 0,
+      "stuck_signals": [],
+      "top_families": [
+        {
+          "count": 3,
+          "family": "view",
+          "pct": 75
+        },
+        {
+          "count": 1,
+          "family": "close",
+          "pct": 25
+        }
+      ]
+    },
     "ls": "2026-04-02 16:01:30",
     "s": [
       [
